@@ -126,3 +126,44 @@ treated as non-exempt (fail open) so a lookup error does not drop billing.
 * `orders` as nested object vs string over the REST endpoint.
 * The exact visit endpoint and attribute shape for `Visit Status`.
 * The order-attribute endpoint shape for the billing-exempt check.
+
+## VERIFIED end-to-end on the local stack (2026-08-13)
+
+Transform run against a real KAH encounter → 3 correct lines (Paracetamol
+qty 10; CBC + Bands qty 1). Write via `process_event(create.sale.order)` on the
+local Odoo → **sale order S00003 created** with an order line whose product was
+matched by uuid. Full read→transform→write chain works.
+
+### Prerequisites the sale-order write needs (all implementation-config)
+
+These are empty on a default Bahmni Odoo (both KAH and a fresh local stack),
+which is the definitive cause of `sale.order = 0`. They are identical
+requirements for odoo-connect — not an OpenFn concern:
+
+1. **`order.type`** records whose `name` matches each order's `type`
+   (e.g. "Lab Order", "Drug Order").
+2. **`sale.shop`** — requires `name`, `payment_default_id`, plus `warehouse_id`
+   and `location_id` to be useful.
+3. **`order.type.shop.map`** linking order type → shop (a row with no
+   `location_name` acts as the default).
+4. **Products matched by `product.product.uuid` = the order's `productId`**
+   (concept uuid for lab, drug uuid for drugs). The catalogue feeds populate
+   these uuids.
+
+### `vals` fields that are mandatory or the create crashes/misbehaves
+
+- **`visitType`** must be present, or `create_orders` throws
+  `'NoneType' object has no attribute 'lower'` (care_setting derivation). The
+  Java source is the visit's "Visit Status" attribute, so the workflow must
+  fetch the **visit**, not only the encounter.
+- **`quantityUnits`** must map to the product UOM via `syncable.units.mapping`,
+  or the line quantity defaults to 0 (line still created). Another
+  implementation-config item.
+
+### Minimal seed used to prove the write (RPC)
+
+```
+order.type            {name: "Drug Order"}
+sale.shop             {name, payment_default_id, warehouse_id, location_id}
+order.type.shop.map   {order_type, shop_id}     # no location_name = default
+```

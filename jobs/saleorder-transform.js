@@ -16,6 +16,7 @@ fn(state => {
       quantity: (d.dosingInstructions && d.dosingInstructions.quantity) || 0,
       quantityUnits: (d.dosingInstructions && d.dosingInstructions.quantityUnits) || null,
       action: d.action, type: d.orderType, dispensed: 'false',
+      visitType: state.visitType || 'OPD',  // REQUIRED by Odoo; real source = visit 'Visit Status' attr
       dateCreated: d.dateActivated, providerName, voided: !!d.voided,
     });
   }
@@ -29,6 +30,7 @@ fn(state => {
       productId: o.conceptUuid, productName: o.concept && o.concept.name,
       quantity: 1, quantityUnits: 'Unit(s)',
       action: o.action, type: o.orderType, dispensed: 'false',
+      visitType: state.visitType || 'OPD',  // REQUIRED by Odoo; real source = visit 'Visit Status' attr
       dateCreated: o.dateCreated, providerName, voided: !!o.voided,
     };
     const prev = latest[e.productId];
