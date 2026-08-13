@@ -1,0 +1,50 @@
+name: bahmni-openfn
+workflows:
+  patient-to-odoo-customer:
+    name: Patient to Odoo customer
+    jobs:
+      read-openmrs:
+        name: Read patient feed and build vals
+        adaptor: '@openfn/language-http@latest'
+        credential: admin@bahmni.local-openmrs
+        body: |
+          get('/openmrs/ws/atomfeed/patient/recent');
+          fn(state => {
+            const entries = [...state.data.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(m => ({
+              content: (m[1].match(/<content[^>]*><!\[CDATA\[([\s\S]*?)\]\]>/)||[])[1] }));
+            if (!entries.length) return { ...state, vals: null };
+            const [path, qs] = entries[entries.length-1].content.split('?');
+            const query = {}; (qs||'').split('&').filter(Boolean).forEach(p=>{const[k,v]=p.split('=');query[k]=decodeURIComponent(v??'')});
+            return { ...state, entry: { path, query } };
+          });
+          get(state => state.entry.path, { query: $.entry.query });
+          fn(state => {
+            const p = state.data; const pr = (p.identifiers||[]).find(i=>i.preferred)||(p.identifiers||[])[0]||{};
+            const disp = p.person && p.person.display;
+            return { vals: { category:'create.customer', ref:pr.identifier, uuid:p.uuid, name:disp, local_name:disp, attributes:{}, preferredAddress:{} } };
+          });
+      write-odoo:
+        name: Write via process_event
+        adaptor: '@openfn/language-http@latest'
+        credential: admin@bahmni.local-odoo
+        body: |
+          fn(state => ({ ...state, rpcBody: { jsonrpc:'2.0', method:'call',
+            params:{ service:'object', method:'execute_kw',
+              args:[ state.configuration.db, state.configuration.uid, state.configuration.pw,
+                     'api.event.worker','process_event', [ state.vals ] ] }, id:1 } }));
+          post('/jsonrpc', $.rpcBody);
+          fn(state => { const r=state.data; if(r&&r.error) throw new Error(JSON.stringify(r.error.data&&r.error.data.message||r.error)); console.log('process_event:', JSON.stringify(r.result)); return state; });
+    triggers:
+      cron:
+        type: cron
+        cron_expression: '*/2 * * * *'
+        enabled: true
+    edges:
+      cron->read-openmrs:
+        source_trigger: cron
+        target_job: read-openmrs
+        condition_type: always
+      read-openmrs->write-odoo:
+        source_job: read-openmrs
+        target_job: write-odoo
+        condition_type: on_job_success
