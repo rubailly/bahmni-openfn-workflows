@@ -1,0 +1,8 @@
+{
+  "configuration": {
+    "baseUrl": "https://YOUR-BAHMNI-HOST",
+    "username": "OPENMRS_ATOMFEED_USER",
+    "password": "OPENMRS_ATOMFEED_PASSWORD",
+    "tls": { "rejectUnauthorized": false }
+  }
+}
