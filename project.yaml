@@ -1,0 +1,84 @@
+# Portability spec 4.0 - https://docs.openfn.org/documentation/deploy/portability
+#
+# THIS FILE IS A SKELETON. The expressions below are illustrative and have not
+# been run against a live Bahmni instance. See README.md before using.
+
+id: bahmni-openfn
+name: Bahmni OpenFn Integration (experimental)
+description: >-
+  Experimental workflows exploring OpenFn as a transformation and routing layer
+  for Bahmni. Runs alongside existing Atomfeed sync, not in place of it.
+schema_version: '4.0'
+
+workflows:
+  - id: openmrs-to-odoo-shadow
+    name: OpenMRS to Odoo (shadow mode)
+    start: openmrs-event
+    steps:
+      # ---------------------------------------------------------------
+      # Trigger: events are POSTed here by the bridge (see bridge/README.md).
+      # Shadow mode: this workflow observes and records. It must NOT write to
+      # Odoo while odoo-connect is still the system of record.
+      # ---------------------------------------------------------------
+      - id: openmrs-event
+        name: OpenMRS event received
+        type: webhook
+        enabled: true
+        webhook_reply: before_start
+        next:
+          parse-event: true
+
+      - id: parse-event
+        name: Parse Atomfeed event
+        adaptor: '@openfn/language-common@latest'
+        expression: |
+          // Normalise the Atomfeed entry into a flat shape the later steps use.
+          // TODO: confirm the real entry shape against a live feed; the
+          // category/content fields below are assumed, not verified.
+          fn(state => {
+            const entry = state.data || {};
+            return {
+              ...state,
+              event: {
+                id: entry.id,
+                category: entry.category,
+                // Atomfeed content is typically a REST URL pointing at the payload
+                contentUrl: entry.content,
+                updatedAt: entry.updated,
+              },
+            };
+          });
+        next:
+          fetch-patient:
+            condition: state.event.category === 'patient'
+            label: patient events only
+
+      - id: fetch-patient
+        name: Fetch patient from OpenMRS
+        adaptor: '@openfn/language-openmrs@latest'
+        # configuration: "owner|openmrs-bahmni"   # set once the credential exists
+        expression: |
+          // Atomfeed only carries a pointer; the payload is fetched separately.
+          // TODO: replace with the appropriate adaptor helper once the event
+          // shape is confirmed.
+          fn(state => state);
+        next:
+          compare-with-odoo-connect: true
+
+      - id: compare-with-odoo-connect
+        name: Record what would have been sent to Odoo
+        adaptor: '@openfn/language-common@latest'
+        expression: |
+          // Shadow mode: build the Odoo payload and record it WITHOUT writing.
+          // The point of the experiment is to diff this against what
+          // odoo-connect actually produced for the same event.
+          fn(state => {
+            const patient = state.data || {};
+            const proposed = {
+              // TODO: map to the fields bahmni/odoo-connect actually writes
+              ref: patient.identifiers?.[0]?.identifier,
+              name: patient.person?.display,
+            };
+            console.log('WOULD SEND TO ODOO:', JSON.stringify(proposed));
+            return { ...state, proposed };
+          });

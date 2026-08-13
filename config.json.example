@@ -1,0 +1,6 @@
+{
+  "endpoint": "http://localhost:4000",
+  "apiKey": "REPLACE_ME",
+  "specPath": "project.yaml",
+  "statePath": "state.json"
+}
