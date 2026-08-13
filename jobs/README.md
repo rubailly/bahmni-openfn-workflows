@@ -34,3 +34,27 @@ adaptor (see ../docs/decisions.md, D-2).
 - Feeds need **no auth**; content endpoints (`/openmrs/ws/rest/v1/...`) require
   it. Configure `username`/`password` (basic) on the adaptor, not a `headers`
   block, which the adaptor ignores for auth.
+
+## customer-read.js + customer-write.js — full cutover (VERIFIED)
+
+Two steps, mirroring how OpenFn/Lightning models multi-system flows (each system
+is its own step with its own credential):
+
+1. **customer-read.js** (OpenMRS config) — feed → patient → `vals`.
+2. **customer-write.js** (Odoo config) — `process_event(vals)` via Odoo JSON-RPC.
+
+**Verified on the local stack (odoo-connect stopped):** OpenFn created the Odoo
+`res.partner` for a new patient, and the result matches field-for-field what
+`odoo-connect` produced for an equivalent patient (ref, name, uuid,
+customer_rank). This is the Phase 2 cutover, passing.
+
+### Adaptor/API facts found while wiring the write
+- `post(path, data, options)` — the request body is the **second positional
+  arg**, not `{ body }`. `post(url, { body })` sends `{ body: {...} }`.
+- language-http **blocks cross-origin** requests relative to `configuration.baseUrl`
+  ("Target origin does not match baseUrl origin"). Reading OpenMRS and writing
+  Odoo must be **separate steps with separate configs** — which is the correct
+  Lightning pattern anyway.
+- The write uses Odoo's `/jsonrpc` `execute_kw` (no session cookie needed;
+  creds in the payload). The proposed `callMethod` odoo-adaptor function wraps
+  exactly this call more cleanly.

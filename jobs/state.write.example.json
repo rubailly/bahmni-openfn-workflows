@@ -1,0 +1,5 @@
+{
+  "configuration": { "baseUrl": "http://YOUR-ODOO-HOST:8069" },
+  "odoo": { "db": "odoo", "uid": 6, "password": "ODOO_SYNC_USER_PASSWORD" },
+  "vals": "{ produced by customer-read.js }"
+}
