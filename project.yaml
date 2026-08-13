@@ -28,6 +28,13 @@ workflows:
       #
       # The target state is odoo-connect scaled to zero and this workflow as
       # the only writer to Odoo. See docs/cutover-test.md.
+      #
+      # IDEMPOTENCY IS MANDATORY. An event means "this resource changed", and
+      # fetching its content returns the resource's CURRENT FULL STATE, not a
+      # delta. The same encounter emits a new event on every change and always
+      # re-presents all of its orders. Writing a line per order per event will
+      # double-bill. Upsert on a stable key (order uuid / orderNumber).
+      # See docs/feed-observations.md.
       # ---------------------------------------------------------------------
       - id: poll-patient-feed
         name: Every 5 minutes

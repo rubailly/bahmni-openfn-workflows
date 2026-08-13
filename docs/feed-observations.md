@@ -152,6 +152,65 @@ Odoo product. Note `orders[]` and `drugOrders[]` are distinct;
 `openerp-atomfeed-service` also calls `/openmrs/ws/rest/v1/bahmnicore/drugOrders`
 separately.
 
+## The same resource emits repeated events — idempotency is mandatory
+
+Adding a lab order and then a drug order to the **same** encounter produced
+**two** entries on the `encounter` feed, with different event ids and
+timestamps but the **identical content URL**:
+
+```
+1. 2026-08-12T19:40:56Z  /openmrs/ws/rest/v1/bahmnicore/bahmniencounter/<uuid>?includeAll=true
+2. 2026-08-12T19:49:14Z  /openmrs/ws/rest/v1/bahmnicore/bahmniencounter/<uuid>?includeAll=true
+```
+
+An event says *"this encounter changed"*, not *"here is a new thing"*. Fetching
+the content URL always returns the **current full state** of the encounter, not
+a delta. After the second event the payload contained `orders: 1` **and**
+`drugOrders: 1`.
+
+The consequence is the single most important design constraint found so far:
+
+> A consumer that creates an Odoo line per order per event will **double-bill**
+> the lab test, because the second event re-presents it alongside the new drug
+> order.
+
+The consumer must be idempotent, keyed on something stable like the order
+`uuid` or `orderNumber`, upserting rather than inserting. How
+`openerp-atomfeed-service` handles this is worth reading before writing the
+mapping, and the Phase 0 baseline should include this exact scenario: add two
+orders to one encounter and check whether Odoo ends up with two lines or three.
+
+It also confirms oldest-first ordering a second time, now with genuinely
+distinct timestamps.
+
+## `orders[]` and `drugOrders[]` have different shapes
+
+Lab orders land in `orders[]`, drug orders in `drugOrders[]`, within the same
+encounter payload. They are not interchangeable.
+
+`drugOrders[]` adds:
+
+```
+drug{name, uuid, form, strength}
+dosingInstructions{dose, doseUnits, route, frequency, asNeeded,
+                   administrationInstructions, quantity, quantityUnits,
+                   numberOfRefills}
+duration, durationUnits, dosingInstructionType, drugNonCoded
+dateActivated, scheduledDate, effectiveStartDate, effectiveStopDate  <- epoch
+careSetting, autoExpireDate
+```
+
+For billing, `dosingInstructions.quantity` and `quantityUnits` are the
+quantities; a lab order has no equivalent and is effectively quantity 1. This is
+presumably why `openerp-atomfeed-service` has a separate
+`drugorder.uri=/openmrs/ws/rest/v1/bahmnicore/drugOrders` endpoint.
+
+**Field population is inconsistent between the two.** On the observed data,
+`dateCreated` was an epoch integer on the lab order but `null` on the drug
+order, and `urgency` was populated on the lab order but `null` on the drug
+order. Use `dateActivated` for drug orders rather than `dateCreated`, and do not
+assume a field present on one is present on the other.
+
 ## Reliability
 
 One request returned a transient `500` before five consecutive `200`s. The feed
