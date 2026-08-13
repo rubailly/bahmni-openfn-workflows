@@ -40,21 +40,31 @@ The narrow open question is about the layer *above* change capture:
 
 If the answer turns out to be no, this repository should be archived.
 
-## Approach: shadow mode first, not parity
+## Approach: one connection, replaced end to end
 
-The tempting goal is feature parity with Bahmni's existing integrations, so
-that installing with the `openfn` profile does everything `odoo-connect` does.
-That is the wrong first step: parity is large, pays nothing until complete,
-and tests none of the claim above.
+The tempting goal is feature parity across all of Bahmni's integrations, so
+that installing with the `openfn` profile does everything the existing sync
+services do. That is the wrong first step: parity is large, pays nothing until
+complete, and tests none of the claim above.
 
-Instead:
+Instead, take a single connection and replace it properly:
 
-1. **Shadow.** Run alongside the existing Atomfeed services. Consume the same
-   events, build the payload that *would* be sent, log it, and write nothing.
-   Diff against what `odoo-connect` actually produced.
+1. **Cut over one flow.** Stop `odoo-connect` and have OpenFn handle
+   OpenMRS to Odoo end to end, writing to Odoo, compared against a recorded
+   baseline of what `odoo-connect` produced for the same inputs. This is a real
+   integration, not a simulation of one.
 2. **Diverge.** Add one destination the current stack cannot reach (a DHIS2
-   instance, an HIE endpoint). This is the part that tests the actual claim.
-3. **Only then** consider whether replacing anything makes sense.
+   instance, an HIE endpoint). This is the part that tests the actual claim;
+   step 1 only shows OpenFn is not worse.
+3. **Only then** consider whether shipping this as an install option makes
+   sense.
+
+Full methodology, including the baseline capture and the feed-cursor pitfalls,
+is in [docs/cutover-test.md](docs/cutover-test.md).
+
+Note that running both connectors simultaneously is a debugging state only.
+Two writers against the same Odoo instance means no result can be attributed
+to either.
 
 Step 1 is falsifiable in weeks. Step 3 may never be justified, and that is an
 acceptable outcome.

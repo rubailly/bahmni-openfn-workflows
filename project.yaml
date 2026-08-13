@@ -7,18 +7,21 @@ id: bahmni-openfn
 name: Bahmni OpenFn Integration (experimental)
 description: >-
   Experimental workflows exploring OpenFn as a transformation and routing layer
-  for Bahmni. Runs alongside existing Atomfeed sync, not in place of it.
+  for Bahmni. Phase 1 replaces the odoo-connect Atomfeed consumer for a single
+  flow on a test instance; it proposes no change to Bahmni upstream.
 schema_version: '4.0'
 
 workflows:
-  - id: openmrs-to-odoo-shadow
-    name: OpenMRS to Odoo (shadow mode)
+  - id: openmrs-to-odoo
+    name: OpenMRS to Odoo
     start: openmrs-event
     steps:
       # ---------------------------------------------------------------
       # Trigger: events are POSTed here by the bridge (see bridge/README.md).
-      # Shadow mode: this workflow observes and records. It must NOT write to
-      # Odoo while odoo-connect is still the system of record.
+      # The target state is that odoo-connect is STOPPED and this workflow is
+      # the only writer to Odoo. While odoo-connect is still running, keep the
+      # final step in dry-run mode; two writers cannot both be the source of
+      # truth. See docs/cutover-test.md.
       # ---------------------------------------------------------------
       - id: openmrs-event
         name: OpenMRS event received
@@ -63,15 +66,17 @@ workflows:
           // shape is confirmed.
           fn(state => state);
         next:
-          compare-with-odoo-connect: true
+          write-to-odoo: true
 
-      - id: compare-with-odoo-connect
-        name: Record what would have been sent to Odoo
+      - id: write-to-odoo
+        name: Write to Odoo
         adaptor: '@openfn/language-common@latest'
         expression: |
-          // Shadow mode: build the Odoo payload and record it WITHOUT writing.
-          // The point of the experiment is to diff this against what
-          // odoo-connect actually produced for the same event.
+          // Build the Odoo payload.
+          // DRY_RUN is a safety catch for the debugging phase while
+          // odoo-connect may still be running. Once cut over, replace this
+          // step with the Odoo adaptor call that actually writes.
+          // TODO: swap for @openfn/language-odoo once the mapping is confirmed.
           fn(state => {
             const patient = state.data || {};
             const proposed = {
@@ -79,6 +84,6 @@ workflows:
               ref: patient.identifiers?.[0]?.identifier,
               name: patient.person?.display,
             };
-            console.log('WOULD SEND TO ODOO:', JSON.stringify(proposed));
+            console.log('ODOO PAYLOAD (dry run):', JSON.stringify(proposed));
             return { ...state, proposed };
           });
