@@ -46,13 +46,23 @@ Move on as soon as the payloads match. Do not linger here.
 ### Phase 2 — Cutover (OpenFn only) — this is the actual test
 
 1. Reset to a clean database state so Phase 0's records do not confuse results.
-2. Start the stack, then stop the legacy connector:
+2. Start the stack with the legacy connector scaled to zero, so it is never
+   started rather than started and then stopped:
 
    ```shell
-   docker compose stop odoo-connect
+   ./scripts/run-cutover.sh /path/to/bahmni-docker/bahmni-standard
    ```
 
-   No compose file changes are needed. The container simply is not running.
+   which wraps:
+
+   ```shell
+   COMPOSE_PROFILES=bahmni-standard,openfn \
+     docker compose --env-file .env up -d --scale odoo-connect=0
+   ```
+
+   No compose file changes are needed. Note that granular profiles cannot be
+   used to exclude `odoo-connect`: it carries the `odoo` label, so any profile
+   selection that starts Odoo also starts it. Scaling to zero is the mechanism.
 3. Enable writes in the workflow.
 4. Replay the **same scripted actions** from Phase 0.
 5. Compare the resulting Odoo state against the Phase 0 baseline.
@@ -68,10 +78,15 @@ OpenFn is not worse. Phase 3 is where the claim lives.
 
 ## Cautions
 
+* **`--scale 0` must be passed every time.** A plain `docker compose up` will
+  bring `odoo-connect` back, and it will immediately double-write into Odoo,
+  invalidating the comparison without any obvious signal. Always go through
+  `scripts/run-cutover.sh`, which re-applies the flag and then verifies the
+  container is not running before reporting success.
 * **Feed cursors.** `odoo-connect` tracks its own position in the Atom feed.
-  If you stop it during Phase 2 and later restart it, it will catch up and
+  If it is disabled during Phase 2 and later restarted, it will catch up and
   reprocess everything it missed, which will double-write. Either keep it
-  stopped for the duration or reset the environment before restarting it.
+  disabled for the duration or reset the environment before restarting it.
 * **Clean state between phases.** Comparing against a baseline is only
   meaningful if both runs start from the same database state.
 * **Same inputs, literally.** The scripted EMR actions must be identical
