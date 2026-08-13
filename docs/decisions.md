@@ -39,3 +39,28 @@ README). Not yet forked/pushed.
 - Model name on the target instance: old Java used `atom.event.worker`, these
   modules use `api.event.worker`. Confirm with
   `searchRead('ir.model', [['model','like','event.worker']])`.
+
+## D-3: Local dev/test environment (verified working 2026-08-13)
+
+Full local stack via the `openfn` profile: OpenMRS + Odoo 16 + odoo-connect +
+OpenFn Lightning, `COMPOSE_PROFILES=emr,odoo,openfn`. Two-environment setup:
+KAH (remote) = read-only baseline; local = writes and cutover.
+
+Proven on the local stack:
+- OpenFn CLI job reads the OpenMRS feed and builds customer `vals` (same job as
+  verified against KAH).
+- **The write works:** `api.event.worker.process_event(vals)` creates the
+  `res.partner` in Odoo. This is what `callMethod` (D-2) will invoke in-job.
+- Model name confirmed: **`api.event.worker`** (not the old `atom.event.worker`).
+  D-2 verification item resolved.
+
+### Findings that change the code
+- **Lightning does not migrate its own DB on boot.** The `openfn` profile now
+  self-migrates: `entrypoint: sh -c "/app/bin/migrate && exec /app/bin/server"`,
+  and healthcheck `start_period` raised to 90s. Without this the container
+  crash-loops (`relation "public.auth_providers" does not exist`).
+- **The customer `vals` MUST include a truthy `local_name`.** The Odoo module's
+  `_create_or_update_customer` does `for rec in customer_vals.keys(): del ...`
+  on falsy values, which raises "dictionary changed size during iteration" in
+  Python 3 and aborts the create. Our transform now always emits `local_name`.
+  (This is a latent bug in the Bahmni module worth reporting upstream too.)

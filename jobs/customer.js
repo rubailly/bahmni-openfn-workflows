@@ -41,6 +41,10 @@ fn(state => {
     ref: preferred.identifier,
     uuid: p.uuid,
     name: p.person ? p.person.display : undefined,
+    // local_name MUST be truthy: the Odoo module's _create_or_update_customer
+    // deletes falsy keys while iterating dict.keys(), which crashes in Py3
+    // ("dictionary changed size during iteration"). Verified on a live stack.
+    local_name: p.person ? p.person.display : undefined,
     givenName: nm.givenName,
     familyName: nm.familyName,
     gender: p.person && p.person.gender,
