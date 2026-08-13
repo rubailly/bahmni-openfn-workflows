@@ -42,9 +42,13 @@ workflows:
         adaptor: '@openfn/language-http@latest'
         # configuration: "owner|openmrs-atomfeed"   # basic auth, see .env OPENMRS_ATOMFEED_USER
         expression: |
-          // The feed is XML, not JSON.
-          // TODO: confirm how to parse the Atom response before relying on
-          // this. This is the first unknown to resolve - see bridge/README.md.
+          // Returns an Atom XML document. Verified shape in
+          // docs/feed-observations.md.
+          // TODO: parse XML to entries. Each entry yields:
+          //   id       -> "tag:atomfeed.ict4h.org:<event-uuid>"
+          //   category -> event type
+          //   content  -> RELATIVE rest path (in CDATA), e.g.
+          //               /openmrs/ws/rest/v1/... - must be fetched separately
           get('/openmrs/ws/atomfeed/patient/recent');
         next:
           select-new-entries: true
@@ -57,17 +61,30 @@ workflows:
           // On the very first run it is undefined, in which case process
           // nothing and simply record the newest entry id, so the experiment
           // starts from a known point rather than replaying all history.
+          // VERIFIED: entries are OLDEST-FIRST in document order, so the
+          // newest is the LAST element. See docs/feed-observations.md.
           fn(state => {
             const entries = state.entries || [];   // TODO: populate from parsed XML
             const cursor = state.cursor;
 
             if (!cursor) {
+              // Start from now rather than replaying all history.
+              const newest = entries[entries.length - 1]?.id ?? null;
               console.log('No cursor yet - priming from newest entry, processing nothing.');
-              return { ...state, toProcess: [], cursor: entries[0]?.id ?? null };
+              return { ...state, toProcess: [], cursor: newest };
             }
 
             const idx = entries.findIndex(e => e.id === cursor);
-            const toProcess = idx === -1 ? entries : entries.slice(0, idx);
+            // Everything AFTER the cursor is new. If the cursor is no longer on
+            // this page we have fallen behind a page boundary; see below.
+            const toProcess = idx === -1 ? entries : entries.slice(idx + 1);
+
+            if (idx === -1) {
+              // TODO: walk rel="prev-archive" backwards to catch up. Until that
+              // exists, this reprocesses the visible page rather than silently
+              // skipping events; at-least-once is the safer failure mode.
+              console.log('WARNING: cursor not on this page - may have fallen behind.');
+            }
 
             console.log(`${toProcess.length} new entries since ${cursor}`);
             return { ...state, toProcess };
@@ -87,11 +104,14 @@ workflows:
           //
           // TODO: map to the fields openerp-atomfeed-service actually writes.
           // Compare against the Phase 0 baseline before enabling writes.
+          // Each entry carries only a link, so the record must be fetched
+          // from entry.content (a relative REST path) before mapping.
           fn(state => {
             for (const entry of state.toProcess) {
+              console.log('WOULD FETCH:', entry.content);
               console.log('ODOO PAYLOAD (dry run):', JSON.stringify({
-                ref: entry.patientId,
-                name: entry.name,
+                ref: null,   // TODO: from the fetched patient record
+                name: null,  // TODO: from the fetched patient record
               }));
             }
             return state;
@@ -107,9 +127,10 @@ workflows:
           // cursor must survive here. It advances only if everything upstream
           // succeeded, which gives at-least-once processing: a failed run
           // leaves the cursor untouched and the next run retries.
+          // Oldest-first ordering means the LAST processed entry is the newest.
           fn(state => ({
             ...state,
-            cursor: state.toProcess[0]?.id ?? state.cursor,
+            cursor: state.toProcess[state.toProcess.length - 1]?.id ?? state.cursor,
             toProcess: [],
             entries: [],
           }));
