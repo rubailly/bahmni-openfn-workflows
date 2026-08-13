@@ -1,48 +1,70 @@
-# Event bridge (design only — no implementation yet)
+# Bridge: not needed
 
-Something has to notice an OpenMRS event and POST it to a Lightning webhook.
-This directory holds the design for that component. **No code exists here yet.**
+An earlier version of this plan assumed a separate sidecar service was required
+to read the OpenMRS Atom feed and POST events into Lightning. **It is not.**
 
-## Option A: poll the existing Atom feed (simplest)
+OpenFn cron triggers carry state forward:
 
-A small service that reads the Atom feed OpenMRS already exposes, tracks its own
-cursor, and POSTs each entry to a Lightning webhook URL.
+> Every time a cron-triggered workflow is run it will start with the final
+> output of the last successful run. This allows users to build workflows that
+> make use of a "cursor" that tracks what happened last time the workflow ran.
+>
+> — [OpenFn triggers documentation](https://docs.openfn.org/documentation/build/triggers)
 
-* Nothing in Bahmni changes. Works against a stock install.
-* Reuses feeds that are already published and already consumed by
-  `odoo-connect`, so shadow-mode comparison is apples-to-apples.
-* Adds a second consumer of the same feed. Confirm that the feed's cursor
-  semantics and retention tolerate this before relying on it.
-* Latency is bounded by the poll interval.
+That is exactly what a feed consumer needs. A cron-triggered workflow can read
+the cursor from its incoming state, fetch the feed over HTTP, process whatever
+is new, and return the updated cursor as its final state. No extra container,
+no extra codebase, no extra image to maintain.
 
-Existing prior art to read first: [openerp-atomfeed-service](https://github.com/Bahmni/openerp-atomfeed-service).
+If run-state proves too fragile for the cursor (for example if a failed run
+should not advance it), [Collections](https://docs.openfn.org/documentation/build/collections)
+provides explicit key-value storage that persists across runs.
 
-## Option B: forward from openmrs-eip (preferred, if it proves out)
+## Why this matters beyond convenience
 
-Add a Camel route to an existing [openmrs-eip](https://github.com/openmrs/openmrs-eip)
-deployment that forwards its Debezium-derived events to the Lightning webhook.
+The claim being tested is that a low-code layer can replace compiled sync
+services. Adding a bespoke Java or Node sidecar to make that work would have
+undercut the claim. Doing the whole thing as a workflow is the honest version
+of the experiment, and it is a materially smaller piece of work.
 
-* Reuses a proven CDC mechanism instead of building a second one.
-* Genuinely event-driven; no polling.
-* Collaboration with existing work rather than a parallel implementation.
-* Requires an openmrs-eip deployment, so it is not a stock-Bahmni story.
-* Events are row-level, so domain meaning must be reconstructed downstream.
+## What the legacy consumer actually reads
 
-**Option B is the better long-term design.** Option A exists only because it can
-be stood up against an unmodified Bahmni for a first comparison.
+From
+[`erp-atomfeed.properties`](https://github.com/Bahmni/openerp-atomfeed-service/blob/master/openerp-atomfeed-service/src/main/resources/erp-atomfeed.properties)
+in `openerp-atomfeed-service`:
 
-## Explicitly rejected: an OpenMRS module
+| Property | Feed | Purpose |
+|---|---|---|
+| `customer.feed.generator.uri` | `/openmrs/ws/atomfeed/patient/recent` | Patient to Odoo customer |
+| `saleorder.feed.generator.uri` | `/openmrs/ws/atomfeed/encounter/recent` | Encounter to Odoo sale order |
+| `drug.feed.generator.uri` | `/openmrs/ws/atomfeed/drug/recent` | Drug catalogue |
+| `lab.feed.generator.uri` | `/openmrs/ws/atomfeed/lab/recent` | Lab |
+| `saleable.feed.generator.uri` | `/openmrs/ws/atomfeed/saleable/recent` | Saleable items |
+| `referencedata.feed.generator.uri` | `/reference-data/ws/feed/recent` | Reference data |
+| `openelis.saleorder.feed.generator.uri` | `/openelis/ws/feed/patient/recent` | OpenELIS patient |
 
-Registering a Spring `@EventListener` inside an OMOD would give low-latency
-domain-level events, but it means building and deploying a module into OpenMRS
-and tracking Bahmni core versions indefinitely. Given openmrs-eip exists, this
-is almost certainly unnecessary.
+It also calls back into OpenMRS REST for payloads:
+`/openmrs/ws/rest/v1/bahmnicore/drugOrders` and `/openmrs/ws/rest/v1/order`.
 
-## Open questions before writing any code
+**Seven feeds is the scope of full parity.** Phase 1 targets the first one
+only. See [../docs/cutover-test.md](../docs/cutover-test.md).
 
-1. What exactly does an Atom feed entry contain, and what has to be fetched
-   separately? The `project.yaml` skeleton currently *assumes* a shape.
-2. What are the feed's retention and cursor semantics with two independent
-   consumers?
-3. How does `odoo-connect` handle failures and replays today? Shadow-mode
-   comparison is only meaningful if both sides see the same event set.
+## Cursor independence
+
+`odoo-connect` persists its feed markers in **Odoo's own Postgres database**
+(`jdbc.url=jdbc:postgresql://localhost/odoo`, `update.atomfeed.marker`). An
+OpenFn workflow keeping its cursor in run state or Collections is therefore
+completely independent of it. The two consumers cannot interfere with each
+other's position, which is what makes a clean baseline-then-cutover comparison
+possible.
+
+## Open questions to resolve first
+
+1. **Atom feeds are XML.** OpenFn adaptors are JSON-oriented. Confirm how to
+   parse the feed response before designing around it; this is the first real
+   technical unknown.
+2. Does an entry carry the payload inline, or only a link that must be fetched
+   separately? The workflow skeleton currently assumes a link.
+3. Paging: `chunking.strategy=number` in the legacy config implies `/recent`
+   plus numbered pages. Confirm how to walk backwards on first run, and
+   whether the experiment should start from `/recent` only.

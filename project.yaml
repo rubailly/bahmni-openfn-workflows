@@ -1,7 +1,8 @@
 # Portability spec 4.0 - https://docs.openfn.org/documentation/deploy/portability
 #
-# THIS FILE IS A SKELETON. The expressions below are illustrative and have not
-# been run against a live Bahmni instance. See README.md before using.
+# THIS FILE IS A SKELETON. It has never been deployed or run against a live
+# Bahmni instance. Expressions carry TODO markers where real behaviour is
+# still unknown. See README.md and bridge/README.md.
 
 id: bahmni-openfn
 name: Bahmni OpenFn Integration (experimental)
@@ -12,78 +13,103 @@ description: >-
 schema_version: '4.0'
 
 workflows:
-  - id: openmrs-to-odoo
-    name: OpenMRS to Odoo
-    start: openmrs-event
+  - id: openmrs-patient-to-odoo
+    name: OpenMRS patient feed to Odoo
+    start: poll-patient-feed
     steps:
-      # ---------------------------------------------------------------
-      # Trigger: events are POSTed here by the bridge (see bridge/README.md).
-      # The target state is that odoo-connect is STOPPED and this workflow is
-      # the only writer to Odoo. While odoo-connect is still running, keep the
-      # final step in dry-run mode; two writers cannot both be the source of
-      # truth. See docs/cutover-test.md.
-      # ---------------------------------------------------------------
-      - id: openmrs-event
-        name: OpenMRS event received
-        type: webhook
+      # ---------------------------------------------------------------------
+      # Replaces the "customer" flow of openerp-atomfeed-service, which reads
+      # /openmrs/ws/atomfeed/patient/recent and creates the matching customer
+      # in Odoo.
+      #
+      # No sidecar service is involved. A cron trigger carries the previous
+      # run's final state forward, so state.cursor is the feed position.
+      # See: https://docs.openfn.org/documentation/build/triggers
+      #
+      # The target state is odoo-connect scaled to zero and this workflow as
+      # the only writer to Odoo. See docs/cutover-test.md.
+      # ---------------------------------------------------------------------
+      - id: poll-patient-feed
+        name: Every 5 minutes
+        type: cron
+        cron_expression: '*/5 * * * *'
         enabled: true
-        webhook_reply: before_start
         next:
-          parse-event: true
+          fetch-feed: true
 
-      - id: parse-event
-        name: Parse Atomfeed event
+      - id: fetch-feed
+        name: Fetch patient Atom feed
+        adaptor: '@openfn/language-http@latest'
+        # configuration: "owner|openmrs-atomfeed"   # basic auth, see .env OPENMRS_ATOMFEED_USER
+        expression: |
+          // The feed is XML, not JSON.
+          // TODO: confirm how to parse the Atom response before relying on
+          // this. This is the first unknown to resolve - see bridge/README.md.
+          get('/openmrs/ws/atomfeed/patient/recent');
+        next:
+          select-new-entries: true
+
+      - id: select-new-entries
+        name: Select entries newer than the cursor
         adaptor: '@openfn/language-common@latest'
         expression: |
-          // Normalise the Atomfeed entry into a flat shape the later steps use.
-          // TODO: confirm the real entry shape against a live feed; the
-          // category/content fields below are assumed, not verified.
+          // state.cursor is carried over from the previous successful run.
+          // On the very first run it is undefined, in which case process
+          // nothing and simply record the newest entry id, so the experiment
+          // starts from a known point rather than replaying all history.
           fn(state => {
-            const entry = state.data || {};
-            return {
-              ...state,
-              event: {
-                id: entry.id,
-                category: entry.category,
-                // Atomfeed content is typically a REST URL pointing at the payload
-                contentUrl: entry.content,
-                updatedAt: entry.updated,
-              },
-            };
+            const entries = state.entries || [];   // TODO: populate from parsed XML
+            const cursor = state.cursor;
+
+            if (!cursor) {
+              console.log('No cursor yet - priming from newest entry, processing nothing.');
+              return { ...state, toProcess: [], cursor: entries[0]?.id ?? null };
+            }
+
+            const idx = entries.findIndex(e => e.id === cursor);
+            const toProcess = idx === -1 ? entries : entries.slice(0, idx);
+
+            console.log(`${toProcess.length} new entries since ${cursor}`);
+            return { ...state, toProcess };
           });
         next:
-          fetch-patient:
-            condition: state.event.category === 'patient'
-            label: patient events only
-
-      - id: fetch-patient
-        name: Fetch patient from OpenMRS
-        adaptor: '@openfn/language-openmrs@latest'
-        # configuration: "owner|openmrs-bahmni"   # set once the credential exists
-        expression: |
-          // Atomfeed only carries a pointer; the payload is fetched separately.
-          // TODO: replace with the appropriate adaptor helper once the event
-          // shape is confirmed.
-          fn(state => state);
-        next:
-          write-to-odoo: true
+          write-to-odoo:
+            condition: state.toProcess.length > 0
+            label: only when there is new work
 
       - id: write-to-odoo
-        name: Write to Odoo
+        name: Create or update the Odoo customer
         adaptor: '@openfn/language-common@latest'
         expression: |
-          // Build the Odoo payload.
-          // DRY_RUN is a safety catch for the debugging phase while
-          // odoo-connect may still be running. Once cut over, replace this
-          // step with the Odoo adaptor call that actually writes.
-          // TODO: swap for @openfn/language-odoo once the mapping is confirmed.
+          // TODO: swap @openfn/language-common for the Odoo adaptor and
+          // actually write. Kept as a dry run while odoo-connect may still be
+          // running; two writers cannot both be the source of truth.
+          //
+          // TODO: map to the fields openerp-atomfeed-service actually writes.
+          // Compare against the Phase 0 baseline before enabling writes.
           fn(state => {
-            const patient = state.data || {};
-            const proposed = {
-              // TODO: map to the fields bahmni/odoo-connect actually writes
-              ref: patient.identifiers?.[0]?.identifier,
-              name: patient.person?.display,
-            };
-            console.log('ODOO PAYLOAD (dry run):', JSON.stringify(proposed));
-            return { ...state, proposed };
+            for (const entry of state.toProcess) {
+              console.log('ODOO PAYLOAD (dry run):', JSON.stringify({
+                ref: entry.patientId,
+                name: entry.name,
+              }));
+            }
+            return state;
           });
+        next:
+          advance-cursor: true
+
+      - id: advance-cursor
+        name: Advance the cursor
+        adaptor: '@openfn/language-common@latest'
+        expression: |
+          // This step's output becomes the next run's input state, so the
+          // cursor must survive here. It advances only if everything upstream
+          // succeeded, which gives at-least-once processing: a failed run
+          // leaves the cursor untouched and the next run retries.
+          fn(state => ({
+            ...state,
+            cursor: state.toProcess[0]?.id ?? state.cursor,
+            toProcess: [],
+            entries: [],
+          }));
