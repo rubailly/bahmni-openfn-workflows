@@ -76,11 +76,91 @@ most recent.
 5. Paging must be handled if the workflow ever falls more than one page behind.
    Not yet implemented; the current skeleton reads `recent` only.
 
+## Patient and encounter events (verified)
+
+A test patient and a lab order were created on the observed instance, which
+produced one entry on each of the `patient` and `encounter` feeds.
+
+```xml
+<entry>
+  <title>Patient</title>
+  <category term="patient" />
+  <id>tag:atomfeed.ict4h.org:<event-uuid></id>
+  <content type="application/vnd.atomfeed+xml"><![CDATA[/openmrs/ws/rest/v1/patient/<uuid>?v=full]]></content>
+</entry>
+
+<entry>
+  <title>Encounter</title>
+  <category term="Encounter" />
+  <id>tag:atomfeed.ict4h.org:<event-uuid></id>
+  <content type="application/vnd.atomfeed+xml"><![CDATA[/openmrs/ws/rest/v1/bahmnicore/bahmniencounter/<uuid>?includeAll=true]]></content>
+</entry>
+```
+
+Four traps here:
+
+1. **Category casing is inconsistent.** `patient` and `drug` are lowercase;
+   `Encounter` is capitalised. Filter case-insensitively.
+2. **Content paths carry query strings** (`?v=full`, `?includeAll=true`). Use
+   the path verbatim; do not reconstruct it or append parameters.
+3. **Encounters use a Bahmni-specific namespace**,
+   `bahmnicore/bahmniencounter`, not core OpenMRS REST. A generic HTTP call is
+   safer here than an OpenMRS-specific adaptor helper.
+4. **A lab order arrives on the `encounter` feed, not the `lab` feed.**
+   `lab/recent` stayed empty. The `lab`, `drug` and `saleable` feeds carry
+   catalogue/reference data. This matches `openerp-atomfeed-service`, whose
+   `saleorder.feed.generator.uri` points at `encounter/recent`.
+
+## Authentication asymmetry
+
+* **Feeds:** returned `200` with **no credentials**.
+* **Content endpoints:** returned `401`; the documented Bahmni defaults worked.
+
+So the workflow needs a credential for the second call but not the first. Worth
+noting that the feeds enumerate drug and lab catalogues to anyone who can reach
+the host.
+
+## Payload fields available for mapping
+
+`/openmrs/ws/rest/v1/patient/<uuid>?v=full`:
+
+```
+uuid, display
+identifiers[] -> identifier, identifierType.display, preferred
+person -> gender, age, birthdate, preferredName{givenName, familyName},
+          names[], addresses[], attributes[]
+auditInfo -> dateCreated, dateChanged, changedBy
+```
+
+`/openmrs/ws/rest/v1/bahmnicore/bahmniencounter/<uuid>?includeAll=true`:
+
+```
+patientId, patientUuid
+encounterType, encounterUuid, visitUuid, visitType
+encounterDateTime      <- epoch millis (integer), NOT an ISO string
+locationName, locationUuid
+providers[] -> uuid, name, encounterRoleUuid
+orders[]    -> orderNumber, orderType, action, urgency, dateCreated (epoch),
+               concept{uuid, name, shortName, conceptClass, units, mappings[]}
+drugOrders[]           <- separate array from orders[]
+observations[], bahmniDiagnoses[]
+```
+
+`orders[]` is the billable content a sale order would be built from, and
+`concept.mappings[]` carries external code mappings usable for matching an
+Odoo product. Note `orders[]` and `drugOrders[]` are distinct;
+`openerp-atomfeed-service` also calls `/openmrs/ws/rest/v1/bahmnicore/drugOrders`
+separately.
+
+## Reliability
+
+One request returned a transient `500` before five consecutive `200`s. The feed
+can fail intermittently, so the cursor must not advance on failure. The current
+design satisfies this: the cursor is written in a final step that only runs if
+everything upstream succeeded.
+
 ## Still unverified
 
-* The patient feed was **empty** on the instance observed, so a patient entry
-  has not been seen directly. The structure is produced by the same publisher
-  and should match, but the exact content path for patient events is still an
-  assumption.
-* Whether any feed endpoint requires authentication in a default configuration.
-  On the instance observed, these returned `200` without credentials.
+* Whether the feed requires authentication in configurations other than the one
+  observed.
+* Page-boundary catch-up via `rel="prev-archive"` has not been exercised.

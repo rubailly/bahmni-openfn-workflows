@@ -94,6 +94,25 @@ workflows:
             condition: state.toProcess.length > 0
             label: only when there is new work
 
+      - id: fetch-records
+        name: Fetch each entry's record
+        adaptor: '@openfn/language-http@latest'
+        # configuration: "owner|openmrs-rest"   # REQUIRED: feeds are open, but
+        # the content endpoints return 401 without credentials.
+        expression: |
+          // entry.content is a RELATIVE path that already includes its query
+          // string (e.g. /openmrs/ws/rest/v1/patient/<uuid>?v=full).
+          // Use it verbatim - do not rebuild it or append parameters.
+          each(
+            $.toProcess,
+            get(state => state.data.content).then(state => {
+              state.records = [...(state.records || []), state.data];
+              return state;
+            })
+          );
+        next:
+          write-to-odoo: true
+
       - id: write-to-odoo
         name: Create or update the Odoo customer
         adaptor: '@openfn/language-common@latest'
@@ -102,16 +121,22 @@ workflows:
           // actually write. Kept as a dry run while odoo-connect may still be
           // running; two writers cannot both be the source of truth.
           //
-          // TODO: map to the fields openerp-atomfeed-service actually writes.
-          // Compare against the Phase 0 baseline before enabling writes.
-          // Each entry carries only a link, so the record must be fetched
-          // from entry.content (a relative REST path) before mapping.
+          // Field paths below are VERIFIED against a live patient payload.
+          // What remains unverified is which of them openerp-atomfeed-service
+          // actually writes into Odoo - confirm against the Phase 0 baseline
+          // before enabling writes.
           fn(state => {
-            for (const entry of state.toProcess) {
-              console.log('WOULD FETCH:', entry.content);
+            for (const rec of state.records || []) {
+              const preferred =
+                (rec.identifiers || []).find(i => i.preferred) || rec.identifiers?.[0];
+
               console.log('ODOO PAYLOAD (dry run):', JSON.stringify({
-                ref: null,   // TODO: from the fetched patient record
-                name: null,  // TODO: from the fetched patient record
+                ref:        preferred?.identifier,
+                name:       rec.person?.display,
+                givenName:  rec.person?.preferredName?.givenName,
+                familyName: rec.person?.preferredName?.familyName,
+                gender:     rec.person?.gender,
+                birthdate:  rec.person?.birthdate,
               }));
             }
             return state;
@@ -133,4 +158,5 @@ workflows:
             cursor: state.toProcess[state.toProcess.length - 1]?.id ?? state.cursor,
             toProcess: [],
             entries: [],
+            records: [],
           }));
