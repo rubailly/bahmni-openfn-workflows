@@ -42,10 +42,16 @@ This is a genuine reliability advantage to preserve deliberately, not by luck.
 
 ## 4. Page catch-up — falling behind
 
-Feeds page via `rel="next-archive"` (newer) and `rel="prev-archive"` (older). **IMPLEMENTED + verified** - see jobs/feed-cursor.js: one page per run, advance via next-archive, catch up over successive runs, no skips.
-the workflow falls more than one page behind (downtime, backlog), it must walk
-prev-archive to catch up rather than skip. Not yet implemented; the current
-jobs read `recent` only. Needed before claiming durability parity.
+Feeds page via `rel="next-archive"` (newer) and `rel="prev-archive"` (older),
+with `/recent` as the head page. If the workflow falls more than one page behind
+(downtime, backlog) it must walk the pages to catch up rather than skip.
+
+**IMPLEMENTED + verified** — see `jobs/feed-cursor.js` / `jobs/feed-catchup-job.js`:
+the cursor is `{ pagePath, entryId }`, it reads one page per run and advances via
+`next-archive` when a newer page exists, catching up over successive runs with no
+skips. Verified against the real paged feed (mid-page-106 → 106/107/108(head),
+all 12 entries in order) including first-run prime, stale-cursor, and steady-state
+cases.
 
 ## 5. Cadence / performance
 
