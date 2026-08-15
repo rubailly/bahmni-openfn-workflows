@@ -13,10 +13,12 @@ rpc(){ curl -s -X POST -H "Content-Type: application/json" -d "$1" "$ODOO" 2>/de
 kw(){ rpc "{\"jsonrpc\":\"2.0\",\"method\":\"call\",\"params\":{\"service\":\"object\",\"method\":\"execute_kw\",\"args\":[\"$DB\",$UID_,\"$PW\",$1]},\"id\":1}"; }
 
 # pick a drug on the feed
-DE=$(curl -sk "$B/openmrs/ws/atomfeed/drug/recent" 2>/dev/null | grep -oE 'CDATA\[[^]]*' | head -1 | sed 's/CDATA\[//')
+FEED_URL="${FEED_URL:-drug}"   # atomfeed name (drug|lab|...)
+FEED="${FEED:-drug}"           # transform category (drug|test|panel|radiology|saleable)
+DE=$(curl -sk "$B/openmrs/ws/atomfeed/$FEED_URL/recent" 2>/dev/null | grep -oE 'CDATA\[[^]]*' | head -1 | sed 's/CDATA\[//')
 curl -sk -u "$OMU:$OMP" "$B$DE" > /tmp/h_drug.json 2>/dev/null
-DUUID=$(jq -r '.uuid' /tmp/h_drug.json)
-echo "### Parity: catalogue/drug (uuid $DUUID)"
+DUUID=$(jq -r '.uuid // .id' /tmp/h_drug.json)
+echo "### Parity: catalogue/$FEED (uuid $DUUID)"
 
 echo "-- [A] snapshot the product odoo-connect created"
 python3 "$HARNESS_DIR/parity.py" snapshot-product "$ODOO" "$DB" "$UID_" "$PW" "$DUUID" "$HARNESS_DIR/csnap-A.json"
@@ -26,7 +28,7 @@ PID=$(kw "\"product.product\",\"search\",[[[\"uuid\",\"=\",\"$DUUID\"]]]" | jq -
 [ "$PID" != "[]" ] && kw "\"product.product\",\"unlink\",[$PID]" >/dev/null 2>&1 || true
 
 echo "-- [B] OpenFn: drug payload -> transform -> process_event(create.drug)"
-jq -n --slurpfile d /tmp/h_drug.json '{data:$d[0], feed:"drug"}' > /tmp/h_dstate.json
+jq -n --slurpfile d /tmp/h_drug.json --arg f "$FEED" '{data:$d[0], feed:$f}' > /tmp/h_dstate.json
 VALS=$(cd /home/rbailly/eclipse-workspace/bahmniopenfn/openfn-run && npx openfn "$HARNESS_DIR/../jobs/catalogue-transform.js" -a common -s /tmp/h_dstate.json -o /tmp/h_dvals.json --log none >/dev/null 2>&1; jq -c '.vals' /tmp/h_dvals.json)
 kw "\"api.event.worker\",\"process_event\",[$VALS]" >/dev/null
 python3 "$HARNESS_DIR/parity.py" snapshot-product "$ODOO" "$DB" "$UID_" "$PW" "$DUUID" "$HARNESS_DIR/csnap-B.json"
