@@ -43,3 +43,30 @@ strain a 15 GB box already running EMR+Odoo+OpenFn). Bringing OpenELIS up and
 placing a lab order in its UI (or a fuller-RAM host) closes the last gap; the
 OpenFn logic is ready. A real feed payload may also carry a test **name** to use
 for `productName` instead of the uuid placeholder.
+
+## OpenELIS brought up in the real stack (2026-08-15) — two OpenELIS-internal blockers
+
+OpenELIS was started as part of the Bahmni stack (`openelis` profile, same
+compose). It runs and consumes the OpenMRS feeds. But getting a real
+patient-feed entry to flow through is blocked by **two OpenELIS-internal issues**
+(not OpenFn, and not the Odoo side):
+
+1. **OpenELIS patient sync gap.** OpenELIS creates lab samples from the OpenMRS
+   encounter feed, but first needs the patient in its own DB (populated from the
+   OpenMRS *patient* feed). For the test patient (ABC200001) sample creation
+   fails: `LIMSRuntimeException: Patient with uuid '...' not found in ELIS`
+   (`EncounterFeedProcessor.createSample`). So no sample → the OpenELIS patient
+   feed has nothing for that patient. This is OpenELIS's own patient-feed sync,
+   a race/config issue inside OpenELIS.
+
+2. **OpenELIS feed auth.** `/openelis/ws/feed/patient/recent` returns `401` for
+   the configured `atomfeed` credential (the user exists in `login_user`, but
+   the stored password hash doesn't match the stack's `OPENELIS_ATOMFEED_PASSWORD`;
+   custom OpenELIS hashing, no `WWW-Authenticate`). A stack credential/seed
+   mismatch.
+
+**Conclusion:** the flow-8 OpenFn transform + write are proven (above). The live
+OpenELIS-feed read needs OpenELIS's own patient-sync and feed-auth resolved —
+OpenELIS Bahmni-stack debugging, independent of the OpenFn work. Notably,
+OpenELIS's sample-creation shows the *same* patient-before-dependent-event race
+we saw break odoo-connect's sale orders.
