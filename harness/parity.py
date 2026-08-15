@@ -60,6 +60,13 @@ if __name__ == "__main__":
         _, _, url, db, uid, pw, prefix, out = sys.argv
         json.dump(snapshot(url,db,uid,pw,prefix), open(out,"w"), indent=2, sort_keys=True)
         print(f"snapshot: {len(json.load(open(out)))} records -> {out}")
+    elif cmd == "snapshot-product":
+        _, _, url, db, uid, pw, prod_uuid, out = sys.argv
+        prods = rpc(url,db,uid,pw,"product.product","search_read",
+                    [[["uuid","=",prod_uuid]]], {"fields":TRACKED["product.product"]})
+        snap = {"product.product:"+prod_uuid: ({k: prods[0].get(k) for k in TRACKED["product.product"]} if prods else None)}
+        json.dump(snap, open(out,"w"), indent=2, sort_keys=True)
+        print(f"snapshot-product: {'found' if prods else 'ABSENT'} -> {out}")
     elif cmd == "diff":
         a = json.load(open(sys.argv[2])); b = json.load(open(sys.argv[3]))
         d = diff(a,b)
