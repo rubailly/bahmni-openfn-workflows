@@ -44,7 +44,37 @@ placing a lab order in its UI (or a fuller-RAM host) closes the last gap; the
 OpenFn logic is ready. A real feed payload may also carry a test **name** to use
 for `productName` instead of the uuid placeholder.
 
-## OpenELIS brought up in the real stack (2026-08-15) — two OpenELIS-internal blockers
+## OpenELIS brought up in the real stack (2026-08-15) — LIVE end-to-end PROVEN
+
+OpenELIS was started as part of the Bahmni stack (`openelis` profile). Flow 8 was
+then proven **live end to end** against the real OpenELIS feed:
+read feed -> fetch accession -> transform -> `process_event` -> **sale order line
+created** (product "Methadone screening, urine" matched by uuid, real patient
+ABC200000). The real payload includes `testName`, so the transform uses the real
+name (no uuid placeholder needed).
+
+### OpenELIS feed auth (the key detail)
+
+The feed is **not** HTTP basic auth. OpenELIS's `WebServiceAction` reads
+`loginName` and `password` as **request parameters** (Struts form). Basic auth
+yields a blank username ("Unauthorized atomfeed access attempt ... using username
+"). Authenticate with query params:
+`/openelis/ws/feed/patient/recent?loginName=atomfeed&password=AdminadMIN*`
+(the documented stack credential; same across Bahmni/Mekom `.env`). The OpenELIS
+content/accession endpoint uses the same param auth. Internal URL:
+`http://openelis:8052/openelis/...`.
+
+### Notes
+- Feed entries point at `/openelis/ws/rest/accession/<accessionUuid>` (the
+  OpenElisLabOrder). Entries are the ict4h atom format (same paging as OpenMRS).
+- The customer (patient identifier) must exist in Odoo first, same as every
+  sale-order flow.
+- Earlier confusion (blocked on auth + a patient-not-in-ELIS sample-creation
+  error for a freshly-created EMR patient) was: (a) the param-auth mechanism,
+  now solved; (b) OpenELIS's own OpenMRS->ELIS patient sync lag for brand-new
+  patients — not relevant to reading existing accessions.
+
+### Superseded note (kept for history)
 
 OpenELIS was started as part of the Bahmni stack (`openelis` profile, same
 compose). It runs and consumes the OpenMRS feeds. But getting a real
