@@ -67,6 +67,27 @@ if __name__ == "__main__":
         snap = {"product.product:"+prod_uuid: ({k: prods[0].get(k) for k in TRACKED["product.product"]} if prods else None)}
         json.dump(snap, open(out,"w"), indent=2, sort_keys=True)
         print(f"snapshot-product: {'found' if prods else 'ABSENT'} -> {out}")
+    elif cmd == "snapshot-saleorder":
+        # snapshot sale orders for a partner ref, normalised: lines keyed by product uuid
+        _, _, url, db, uid, pw, ref, out = sys.argv
+        pid = rpc(url,db,uid,pw,"res.partner","search",[[["ref","=",ref]]])
+        snap = {}
+        if pid:
+            sos = rpc(url,db,uid,pw,"sale.order","search_read",[[["partner_id","in",pid]]],
+                      {"fields":["state"]})
+            for so in sos:
+                lines = rpc(url,db,uid,pw,"sale.order.line","search_read",
+                            [[["order_id","=",so["id"]]]], {"fields":["product_uom_qty","dispensed","product_id"]})
+                # key lines by the product's uuid (stable across connectors)
+                lk = {}
+                for ln in lines:
+                    puid = rpc(url,db,uid,pw,"product.product","read",[[ln["product_id"][0]],["uuid"]])[0]["uuid"]
+                    lk["line:"+str(puid)] = {"qty":ln["product_uom_qty"], "dispensed":ln["dispensed"]}
+                snap["sale.order:"+ref] = {"state":so["state"], "lines":lk}
+        else:
+            snap["sale.order:"+ref] = None
+        json.dump(snap, open(out,"w"), indent=2, sort_keys=True)
+        print(f"snapshot-saleorder: {'found '+str(len(snap))+' order(s)' if pid and snap.get('sale.order:'+ref) else 'ABSENT'} -> {out}")
     elif cmd == "diff":
         a = json.load(open(sys.argv[2])); b = json.load(open(sys.argv[3]))
         d = diff(a,b)

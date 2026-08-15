@@ -34,3 +34,31 @@ surface where "looks the same" isn't.
 - catalogue flow (drug/lab → product): same pattern, key by uuid.
 - encounter/order flows: needs scripted encounters (visit + orders) via REST —
   the harder actions; sale.order + sale.order.line added to the tracked models.
+
+## Sale-order flow — harness built, blocked on encounter fidelity
+
+`run-saleorder-parity.sh` scripts the full sale-order comparison (create patient
++ encounter with a lab order via `bahmnicore/bahmniencounter`; sync via
+odoo-connect [A] vs OpenFn [B]; diff `sale.order` + `sale.order.line`).
+
+**Encounter creation via REST now works** (previously the recurring blocker):
+POST `bahmnicore/bahmniencounter` with `patientUuid`, `encounterTypeUuid`,
+`visitTypeUuid`, `locationUuid`, `providers`, and `orders[{concept, orderTypeUuid}]`
+creates the visit+encounter+order and it lands on the encounter feed.
+
+**But the comparison is blocked because odoo-connect (baseline A) itself fails**
+on a REST-created encounter, with two errors:
+1. `Patient Id not found in Odoo` (417) — timing: the encounter event is
+   processed before the patient event syncs the partner. odoo-connect retries,
+   but the retry hits (2).
+2. `NullPointerException: String.startsWith(...) because value is null` in
+   `OpenERPSaleOrderEventWorker` — a field the Java worker expects is null on a
+   REST-created encounter. A Bahmni-EMR-created encounter carries it (most likely
+   the visit's "Visit Status" attribute or a careSetting) but our minimal REST
+   POST does not.
+
+**Developer handoff:** create the encounter the way Bahmni's EMR does (set the
+visit "Visit Status" attribute; use the emrapi/consultation save path), or
+diagnose the NPE field, so odoo-connect produces a sale order to diff against.
+The OpenFn side of this flow is already proven (transform + write verified in
+Phase 2); what's missing is a clean odoo-connect baseline for the automated diff.
