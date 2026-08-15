@@ -60,6 +60,24 @@ count stays 0 even though partners and the ordered products exist.)
 
 ---
 
+## Issue 3 — OpenELIS→Odoo sale-order worker omits Odoo-required fields
+
+**Symptom:** the OpenELIS→Odoo flow (`OpenElisSaleOrderEventWorker`) produces no
+sale order on Odoo 16; `process_event` fails with `NoneType.lower()` or KeyErrors
+(`orderId`, `productName`, `conceptName`, `quantity`, ...).
+
+**Cause:** `OpenElisLabOrder.addNewOrder` sets only `encounterId`, `voided`,
+`productId` on each order, but `bahmni_api_feed`'s `order_save_service` requires
+`orderId`, `productName`, `conceptName`, `quantity`, `quantityUnits`,
+`previousOrderId`, an order `type` (looked up as an `order.type`), and
+`visitType` (for `care_setting`, else `NoneType.lower()`). The worker omits all
+of these, so no line is created.
+
+**Impact:** OpenELIS-originated lab orders are not billed in Odoo on this
+module/Odoo-16 combination.
+
+---
+
 ## What we can share
 
 We're happy to provide full logs, the exact REST calls, and the two stacks'
