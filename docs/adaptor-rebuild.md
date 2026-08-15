@@ -11,7 +11,7 @@ dedicated adaptors exist. All three adaptors ship **typed credential schemas**
 | **Odoo write** | http → `/jsonrpc` → process_event, raw cred | **`language-odoo` + `callMethod` → process_event, typed cred** | VERIFIED (below). The adaptor's CRUD can't call `process_event`; `callMethod` (our PR) can, over XML-RPC, with the typed Odoo credential. |
 | **OpenMRS content** (patient/encounter) | http, raw cred | `language-openmrs` `get()`, typed cred | Idiomatic REST + auth. |
 | **OpenMRS atom feed** | http | **stays http** | The openmrs adaptor hardcodes `/ws/rest/v1/`; it cannot read `/openmrs/ws/atomfeed/...`. Feed polling is genuinely an http task. |
-| **OpenELIS read** | http (param auth) | `language-openelis`, typed cred (verify it handles `loginName`/`password` param auth) | Typed cred; auth mechanism TBC. |
+| **OpenELIS read** | http (param auth) | **`language-openelis` + `getFeed`/`getResource`, typed cred** | VERIFIED (below). The adaptor did only Basic-auth HTTP against the OpenELIS-Global REST prefix; Bahmni needs `loginName`/`password` param auth on `/openelis/ws`. Added as our third contribution. |
 
 ## Verified: idiomatic Odoo write
 
@@ -51,17 +51,42 @@ raw http adaptor. Two contributions now, both verified against live Bahmni:
 |---|---|---|---|
 | `language-odoo` | `callMethod(model, method, args)` | adaptor did only CRUD, couldn't call `process_event` | `rubailly/adaptors@odoo-callmethod` |
 | `language-openmrs` | `getFeed(name, {page})` | adaptor's `get()` only hits `/ws/rest/v1`, couldn't read Atom feeds | `rubailly/adaptors@openmrs-getfeed` |
+| `language-openelis` | `getFeed(name, {page})` + `getResource(path)` | adaptor used Basic auth against the OpenELIS-Global REST prefix; Bahmni needs `loginName`/`password` param auth on `/openelis/ws` | `rubailly/adaptors@openelis-bahmni` |
 
-With both, the flows use dedicated adaptors + typed credentials end to end:
+With all three, every flow uses dedicated adaptors + typed credentials end to end:
 - OpenMRS feed → `language-openmrs.getFeed`
 - OpenMRS content → `language-openmrs.get`
+- OpenELIS feed + accession → `language-openelis.getFeed` / `getResource`
 - Odoo write → `language-odoo.callMethod` → `process_event`
 
 Each is generally useful (any OpenFn+OpenMRS integration wants feed reading; any
 OpenFn+Odoo integration wants arbitrary method calls), which is why they belong
 upstream rather than in our project.
 
-### Next candidate
-`language-openelis`: verify whether it handles OpenELIS's param-based
-(`loginName`/`password`) feed auth; if not, that's the third enhancement rather
-than an http fallback.
+## Verified: OpenELIS read on the enhanced adaptor
+
+Reading the upstream `language-openelis` (v1.1.2) source showed **two** blockers
+for a Bahmni-packaged OpenELIS, both because the adaptor targets **OpenELIS-Global**:
+1. It authenticates with **HTTP Basic auth** (`makeBasicAuthHeader`); Bahmni's
+   OpenELIS (a Struts `WebServiceAction`) reads `loginName`/`password` as
+   **request params**.
+2. It hardcodes the path prefix `/api/OpenELIS-Global/rest/`; Bahmni serves feeds
+   and resources under `/openelis/ws/...`.
+
+`getFeed(feedName, options)` and `getResource(path, options)` target that variant
+(param auth via a `bahmniRequest` helper, Bahmni paths). Verified live against a
+Bahmni OpenELIS and with unit tests (`enableMockClient`, the adaptors repo's
+standard mock). The flow-8 workflow **"OpenELIS lab sync (via adaptors)"** ran to
+`success` in Lightning: `getFeed('patient')` → `getResource(<accession>)` →
+transform → `language-odoo.callMethod` → `process_event` created the sale order.
+
+Since it targets the Bahmni variant (not OpenELIS-Global), whether it lands
+upstream in `@openfn/language-openelis` or as Bahmni-specific config is a
+maintainer call (OpenFn product / the OpenELIS-Bahmni maintainers).
+
+## All three flows run live
+
+With the three enhancements deployed to a local ws-worker, all three OpenMRS/
+OpenELIS→Odoo flows **run end to end in the Lightning UI** on the dedicated
+adaptors, no http fallback. See `ui-visible-and-run.md` for the run logs and the
+one caveat (these run on hand-patched builds; the clean path is the three PRs).
