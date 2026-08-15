@@ -72,3 +72,21 @@ Both were idempotent updates of existing products (odoo-connect had synced them)
 i.e. same upsert-on-uuid behaviour as odoo-connect. Reference-data payloads use
 `id`/`isActive` field names (mapped to `uuid`/`is_active` in the transform);
 drug payloads use `uuid`/`shortName`/`genericName`/`dosageForm`.
+
+## customer-full-transform.js — full customer parity (VERIFIED)
+
+Extends the customer flow to full field coverage, all verified via
+`process_event` on the local stack:
+- **phone** (from the `phoneNumber` person attribute -> `primaryContact`)
+- **email** (from the `email` attribute)
+- **res.partner.attributes** rows (one per person attribute)
+- **address** (`preferredAddress` passed through -> `address.mapping.service`):
+  `street` and `zip` populated; `city`/`state`/`country` are **config-gated**
+  by the OpenMRS-to-Odoo address field mapping (same prerequisite odoo-connect
+  has, not an OpenFn gap).
+- **update in place**: re-syncing a changed patient updates the same partner
+  (upsert on `ref`); partner count stays 1, no duplicate.
+
+Person attributes come through as `person.attributes[].{attributeType.display,
+value}`; the transform flattens them to `{name: value}` and derives
+`primaryContact` from `phoneNumber`.
