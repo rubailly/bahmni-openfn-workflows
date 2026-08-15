@@ -23,24 +23,32 @@ we verified them live on v2.17.1.
 - **Credential map** (CLI, 2026-01) exists for wiring credential UUIDs at run
   time.
 
-## The one narrow thing still fiddly (deploy-time credential wiring)
+## The one narrow thing still open (traced through source)
 
-Getting the project-linked credential **into the deployed workflow snapshot** so
-runs use it. Two observations from live testing:
-- `openfn deploy` with `credential: <owner>-<name>` (the documented hyphenated
-  reference, owner = `admin@bahmni.local`, name = `openmrs-prov`) still reports
-  `Could not find a credential with name: admin@bahmni.local-openmrs-prov` even
-  though the provision endpoint returns that credential with that exact owner+name
-  and it is project-linked.
-- Runs execute against a workflow **snapshot**; wiring `project_credential_id` on
-  the live job (via rpc) does not affect runs — the snapshot's job shows
-  `credential: NIL`. So the wiring must happen at deploy/provision time.
+Getting the credential into the **run snapshot**. Progress (all verified live):
+- `openfn pull <projectId>` populates the deploy **state** with
+  `project_credentials` keyed as `hyphenate("owner name")` — this was the missing
+  piece; after a pull, `openfn deploy` resolves job credential references (no more
+  "Could not find"). (`mergeSpecIntoState` resolves creds from the *local state*,
+  and the deploy POST response does not include `project_credentials`, so the
+  state must be pulled, not just written by a prior deploy.)
+- After deploy, the **live** workflow jobs have `project_credential_id` SET.
 
-**Precise question:** what is the supported way to wire a project-linked
-credential to a job so that a deployed snapshot (and its runs) uses it? Is it the
-credential-map, a specific `deploy` invocation, or a `project_credential_id` field
-in the `/api/provision` job payload? (We got the job wired on the live workflow
-but not into the run snapshot.)
+**The remaining behavior we could not resolve by reading source:** the deploy does
+**not** regenerate a workflow **snapshot** carrying the credential wiring. The
+single snapshot stays at `lock_version=1` with `project_credential_id = NIL`, and
+runs execute against that snapshot → fail with the http adaptor's
+`UNEXPECTED_RELATIVE_URL` (no `baseUrl`). We tried: (a) deploy with the pulled
+spec; (b) a substantive change (cron `*/2`→`*/1`) to force a new snapshot — the
+workflow stayed `lock_version=1` and no new snapshot appeared; (c) manually
+`Snapshot.create/1` a `lock_version=2` snapshot with creds SET — but the workorder
+still resolved to the `lock_version=1` snapshot.
+
+**Precise question for the Lightning team:** on a headless `openfn deploy`, why is
+a new credentialed snapshot not created (and how do runs pick up job credential
+wiring)? Is credential-only wiring expected to bump `lock_version` / create a
+snapshot, or is there a separate step? This is the ONLY thing that still needs
+you — the broad "can we provision headlessly" is resolved.
 
 ## Bottom line
 
