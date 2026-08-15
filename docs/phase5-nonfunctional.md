@@ -42,7 +42,7 @@ This is a genuine reliability advantage to preserve deliberately, not by luck.
 
 ## 4. Page catch-up — falling behind
 
-Feeds page backwards via `rel="prev-archive"` (see `feed-observations.md`). If
+Feeds page via `rel="next-archive"` (newer) and `rel="prev-archive"` (older). **IMPLEMENTED + verified** - see jobs/feed-cursor.js: one page per run, advance via next-archive, catch up over successive runs, no skips.
 the workflow falls more than one page behind (downtime, backlog), it must walk
 prev-archive to catch up rather than skip. Not yet implemented; the current
 jobs read `recent` only. Needed before claiming durability parity.

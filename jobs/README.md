@@ -90,3 +90,21 @@ Extends the customer flow to full field coverage, all verified via
 Person attributes come through as `person.attributes[].{attributeType.display,
 value}`; the transform flattens them to `{name: value}` and derives
 `primaryContact` from `phoneNumber`.
+
+## feed catch-up (VERIFIED) — feed-cursor.js / feed-catchup-job.js
+
+Robust cursor with **page catch-up**, so a workflow that falls behind never
+skips events. Cursor = `{ pagePath, entryId }`, carried across cron runs.
+
+- Reads **one page per run**; advances via `rel="next-archive"` when a newer
+  page exists, else pins to the page's canonical `via` url. Catch-up happens
+  over successive runs (bounded work each run).
+- **Verified against the real paged feed:** starting mid-page-106, it walked
+  106 → 107 → 108(head), processing all 12 entries in order, no skips. Edge
+  cases tested: first run (prime), stale cursor not on page (reprocess-safe, not
+  skip), steady state (nothing new).
+- `feed-cursor.js` is the tested reference (CommonJS + a node test).
+  `feed-catchup-job.js` is the inline OpenFn-job form (jobs can't `require`).
+- First-run behaviour is flow-dependent: patient/encounter **prime** (process
+  nothing, pin cursor); catalogue processes all on first run (matches
+  odoo-connect's initial catalogue sync). Toggle `PRIME` in the job.
