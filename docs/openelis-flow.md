@@ -100,3 +100,34 @@ OpenELIS-feed read needs OpenELIS's own patient-sync and feed-auth resolved —
 OpenELIS Bahmni-stack debugging, independent of the OpenFn work. Notably,
 OpenELIS's sample-creation shows the *same* patient-before-dependent-event race
 we saw break odoo-connect's sale orders.
+
+## Lab parity check — real CBC panel (ABC200002, 2026-08-15)
+
+A CBC panel placed in the Bahmni EMR (12 component tests, all `panelUuid=163700`)
+was billed by both connectors and compared:
+
+| | odoo-connect | OpenFn (OpenELIS flow) |
+|---|---|---|
+| sale.order lines | 1 | 1 |
+| product | 809 "Complete blood count (auto) (Panel)" | 809 (same) |
+| panel dedup | 12 tests → 1 panel line | 12 tests → 1 panel line |
+| product_uom_qty | 0 (UOM config) | 0 (UOM config) |
+
+**Result: parity on the billed outcome** — the CBC panel bills once, as the
+panel product, in both. OpenFn's panel dedup (collapse component tests to the
+`panelUuid`) matches odoo-connect's.
+
+### Two real observations from this run
+
+1. **The same lab flows through TWO source paths.** A lab order placed in the EMR
+   produces (a) an OpenMRS encounter event AND (b) an OpenELIS accession. Here
+   odoo-connect billed it via the **OpenMRS encounter** worker (flow 2),
+   `external_order_id` = the order uuid. OpenFn's OpenELIS flow (flow 8) uses
+   `external_order_id` = accession+panel. The two keys differ, so if both
+   odoo-connect workers (encounter + OpenELIS) are enabled, the same panel
+   **double-bills**. A real deployment must pick one lab-billing source. This is
+   a design point, not an OpenFn defect.
+2. **odoo-connect's OpenMRS sale-order flow succeeded here** for ABC200002, but
+   the *same* flow failed for ABC200001 earlier (timing race + NPE). So it is
+   intermittent/timing-dependent — consistent with the race documented in
+   `saleorder-reliability-finding.md`. OpenFn's sequenced flow is deterministic.
