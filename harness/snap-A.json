@@ -1,0 +1,17 @@
+{
+  "res.partner:HARN111746": {
+    "_attributes": [
+      {
+        "name": "phoneNumber",
+        "value": "0700111222"
+      }
+    ],
+    "customer_rank": 1,
+    "email": false,
+    "name": "Parity Test",
+    "phone": false,
+    "ref": "HARN111746",
+    "street": false,
+    "zip": false
+  }
+}

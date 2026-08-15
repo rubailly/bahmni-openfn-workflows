@@ -12,7 +12,9 @@ fn(state => {
   const vals = {
     category: 'create.customer',
     ref: pref.identifier, uuid: p.uuid, name: disp, local_name: disp,
-    primaryContact: attrs.phoneNumber,          // -> phone
+    // NOTE: odoo-connect does NOT send primaryContact (it only sends attributes),
+    // so it never sets the phone field. Omitting it here for strict parity;
+    // phoneNumber is still synced as a res.partner.attributes row.
     attributes: attrs,                          // -> res.partner.attributes + email
     preferredAddress: (p.person && p.person.preferredAddress) || {},  // -> address.mapping.service
   };
