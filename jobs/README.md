@@ -58,3 +58,17 @@ customer_rank). This is the Phase 2 cutover, passing.
 - The write uses Odoo's `/jsonrpc` `execute_kw` (no session cookie needed;
   creds in the payload). The proposed `callMethod` odoo-adaptor function wraps
   exactly this call more cleanly.
+
+## catalogue-transform.js — product flows (VERIFIED)
+
+Covers all 5 catalogue categories (drug, lab test, lab panel, radiology,
+saleable) via two Odoo service paths, both verified end-to-end with
+`process_event` on the local stack:
+- **drug** -> `drug.data.service`: product upserted, matched by uuid.
+- **lab test** -> `reference.data.service` (shared by panel/radiology/saleable):
+  product upserted with the right category ("All / Services / Lab / Test").
+
+Both were idempotent updates of existing products (odoo-connect had synced them),
+i.e. same upsert-on-uuid behaviour as odoo-connect. Reference-data payloads use
+`id`/`isActive` field names (mapped to `uuid`/`is_active` in the transform);
+drug payloads use `uuid`/`shortName`/`genericName`/`dosageForm`.
