@@ -40,3 +40,28 @@ Testing `callMethod` via the OpenFn CLI hit a compiler issue: it recognizes
 adaptor exports from packaged metadata (ast.json / d.ts), so a locally-patched
 export isn't auto-imported ("callMethod is not defined"). Calling the adaptor
 directly via node works. Once the PR is merged + published, the CLI recognizes it.
+
+## Principle: enhance the adaptor, don't fall back to http
+
+When a dedicated adaptor is missing something we need, the right move is to
+**add it to the adaptor** (a reusable contribution to OpenFn), not to drop to the
+raw http adaptor. Two contributions now, both verified against live Bahmni:
+
+| Adaptor | Function | Fills the gap | Branch |
+|---|---|---|---|
+| `language-odoo` | `callMethod(model, method, args)` | adaptor did only CRUD, couldn't call `process_event` | `rubailly/adaptors@odoo-callmethod` |
+| `language-openmrs` | `getFeed(name, {page})` | adaptor's `get()` only hits `/ws/rest/v1`, couldn't read Atom feeds | `rubailly/adaptors@openmrs-getfeed` |
+
+With both, the flows use dedicated adaptors + typed credentials end to end:
+- OpenMRS feed → `language-openmrs.getFeed`
+- OpenMRS content → `language-openmrs.get`
+- Odoo write → `language-odoo.callMethod` → `process_event`
+
+Each is generally useful (any OpenFn+OpenMRS integration wants feed reading; any
+OpenFn+Odoo integration wants arbitrary method calls), which is why they belong
+upstream rather than in our project.
+
+### Next candidate
+`language-openelis`: verify whether it handles OpenELIS's param-based
+(`loginName`/`password`) feed auth; if not, that's the third enhancement rather
+than an http fallback.
