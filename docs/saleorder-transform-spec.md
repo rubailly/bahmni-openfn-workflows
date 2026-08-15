@@ -167,3 +167,33 @@ order.type            {name: "Drug Order"}
 sale.shop             {name, payment_default_id, warehouse_id, location_id}
 order.type.shop.map   {order_type, shop_id}     # no location_name = default
 ```
+
+## Phase 2 edges — verified (2026-08-15)
+
+All transform edges exercised (via `saleorder-transform.js` = the edges version):
+
+- **dispensed**: reads encounter `observations[]`, matches `orderUuid` and a
+  concept named "Dispensed" with a truthy value → sets `dispensed:'true'`.
+  Verified: the drug order with the Dispensed obs → `true`, the lab order → `false`.
+- **visitType**: extracted from the **visit**'s "Visit Status" attribute
+  (`state.visit`, a separate fetch). Verified → "IPD"/"OPD".
+- **REVISE chaining**: `action == "REVISE"` flags `needPreviousOrders` with the
+  `previousOrderUuid` for the fetch step. Verified → `["drug-prev"]`.
+- **billing-exempt**: order uuids in `state.billingExemptOrderUuids` are skipped
+  entirely. Verified: the exempt lab order is absent from the lines.
+- **idempotency / no double-bill**: sending the same order twice through
+  `process_event` produced ONE line, not two. Verified against real Odoo.
+
+### Known boundary: dispensed WRITE fails on Odoo 16 (Bahmni module bug)
+
+Writing a **dispensed** order via `process_event` fails with `ir.values` —
+`order_save_service.py:180` calls `self.env['ir.values'].search(...)`, but
+`ir.values` was removed in Odoo 13. **This is a bug in `bahmni_api_feed`, not in
+OpenFn: odoo-connect sends the identical vals and fails the same way on Odoo 16.**
+Parity is preserved (both connectors fail identically); worth reporting upstream.
+The OpenFn transform correctly detects and marks dispensed orders regardless.
+
+### Not yet exercised against live data
+- The REVISE **previous-order fetch + write** (transform flags it correctly; the
+  actual `drugOrders/{previousOrderUuid}` fetch step and write not run against a
+  real revision encounter).
